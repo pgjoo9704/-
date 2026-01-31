@@ -1,0 +1,7 @@
+{
+  "name": "Protein Tracker AI",
+  "description": "Analyze your meals via photos to track daily protein intake and hit your fitness goals with AI-powered estimation.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
