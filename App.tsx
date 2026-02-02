@@ -1,6 +1,5 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { GoogleGenAI, Type } from "@google/genai";
 import { MealLog, DailySummary, MealCategory } from './types';
 import { 
   CameraIcon, 
@@ -12,13 +11,11 @@ import {
   XMarkIcon,
   PencilSquareIcon,
   CheckIcon,
-  SparklesIcon
+  PlusIcon
 } from '@heroicons/react/24/outline';
 
-const MODEL_NAME = 'gemini-3-flash-preview';
 const MAX_IMAGE_DIMENSION = 1024; 
 
-// 이미지 리사이징 헬퍼
 const resizeImage = (base64Str: string): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
@@ -27,7 +24,6 @@ const resizeImage = (base64Str: string): Promise<string> => {
       const canvas = document.createElement('canvas');
       let width = img.width;
       let height = img.height;
-
       if (width > height) {
         if (width > MAX_IMAGE_DIMENSION) {
           height *= MAX_IMAGE_DIMENSION / width;
@@ -39,7 +35,6 @@ const resizeImage = (base64Str: string): Promise<string> => {
           height = MAX_IMAGE_DIMENSION;
         }
       }
-
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext('2d');
@@ -65,14 +60,17 @@ export default function App() {
   });
 
   const [isEditingGoal, setIsEditingGoal] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisStep, setAnalysisStep] = useState('');
   const [currentView, setCurrentView] = useState<'daily' | 'history'>('daily');
   const [historyPeriod, setHistoryPeriod] = useState<'week' | 'month'>('week');
   const [selectedHistoryDate, setSelectedHistoryDate] = useState<string | null>(null);
-  const [isTextModalOpen, setIsTextModalOpen] = useState(false);
-  const [manualText, setManualText] = useState('');
   
+  // 새 식단 입력 모달 상태
+  const [isInputModalOpen, setIsInputModalOpen] = useState(false);
+  const [pendingFoodName, setPendingFoodName] = useState('');
+  const [pendingProtein, setPendingProtein] = useState<string>('');
+  const [pendingCategory, setPendingCategory] = useState<MealCategory>('Other');
+  const [pendingImage, setPendingImage] = useState<string | undefined>(undefined);
+
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const albumInputRef = useRef<HTMLInputElement>(null);
   const goalInputRef = useRef<HTMLInputElement>(null);
@@ -112,97 +110,43 @@ export default function App() {
     return "꾸준한 단백질 섭취가 근육 성장의 핵심입니다!";
   };
 
-  const analyzeMeal = async (base64Data?: string, textPrompt?: string) => {
-    setIsAnalyzing(true);
-    setAnalysisStep('AI가 식단을 분석하고 있습니다...');
-
-    const apiKey = (process.env as any).API_KEY;
-    if (!apiKey) {
-      alert('API 키가 설정되지 않았습니다. Vercel 프로젝트 환경 변수에 API_KEY를 추가해주세요.');
-      setIsAnalyzing(false);
-      return;
-    }
-    
-    try {
-      const ai = new GoogleGenAI({ apiKey });
-      const promptParts: any[] = [];
-      
-      if (base64Data) {
-        promptParts.push({ inlineData: { data: base64Data, mimeType: 'image/jpeg' } });
-      }
-      
-      const systemPrompt = `Analyze this meal photo or description. 
-      Identify the food items and estimate the total protein content in grams. 
-      Also categorize the meal (Breakfast, Lunch, Dinner, Snack, or Other) based on typical timing or food types.
-      Respond ONLY in JSON. Use Korean for food names.`;
-
-      promptParts.push({ text: textPrompt ? `${systemPrompt} Input: "${textPrompt}"` : systemPrompt });
-
-      const response = await ai.models.generateContent({
-        model: MODEL_NAME,
-        contents: { parts: promptParts },
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              foodName: { type: Type.STRING },
-              proteinGrams: { type: Type.NUMBER },
-              category: { 
-                type: Type.STRING,
-                description: 'One of: Breakfast, Lunch, Dinner, Snack, Other'
-              }
-            },
-            required: ["foodName", "proteinGrams", "category"]
-          }
-        }
-      });
-
-      const resultText = response.text;
-      if (!resultText) {
-        throw new Error("AI 응답을 받지 못했습니다.");
-      }
-      const result = JSON.parse(resultText);
-      const newMeal: MealLog = {
-        id: Math.random().toString(36).substr(2, 9),
-        timestamp: Date.now(),
-        foodName: result.foodName,
-        proteinGrams: Math.round(result.proteinGrams),
-        category: (result.category as MealCategory) || 'Other',
-        imageUrl: base64Data ? `data:image/jpeg;base64,${base64Data}` : undefined
-      };
-      
-      setMeals(prev => [newMeal, ...prev]);
-    } catch (error) {
-      console.error(error);
-      alert("분석 중 오류가 발생했습니다. 다시 시도해주세요.");
-    } finally {
-      setIsAnalyzing(false);
-      setAnalysisStep('');
-    }
+  const openAddModal = (img?: string, name: string = '') => {
+    setPendingImage(img);
+    setPendingFoodName(name);
+    setPendingProtein('');
+    setPendingCategory('Other');
+    setIsInputModalOpen(true);
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onloadend = async () => {
       const resized = await resizeImage(reader.result as string);
-      const base64Data = resized.split(',')[1];
-      await analyzeMeal(base64Data);
+      openAddModal(resized);
       if (e.target) e.target.value = '';
     };
     reader.readAsDataURL(file);
   };
 
-  const handleManualSubmit = async (e: React.FormEvent) => {
+  const handleSaveMeal = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!manualText.trim()) return;
-    const text = manualText;
-    setManualText('');
-    setIsTextModalOpen(false);
-    await analyzeMeal(undefined, text);
+    const protein = parseFloat(pendingProtein);
+    if (!pendingFoodName.trim() || isNaN(protein)) return;
+
+    const newMeal: MealLog = {
+      id: Math.random().toString(36).substr(2, 9),
+      timestamp: Date.now(),
+      foodName: pendingFoodName,
+      proteinGrams: Math.round(protein),
+      category: pendingCategory,
+      imageUrl: pendingImage
+    };
+    
+    setMeals(prev => [newMeal, ...prev]);
+    setIsInputModalOpen(false);
+    setPendingImage(undefined);
   };
 
   const deleteMeal = (id: string) => {
@@ -223,12 +167,10 @@ export default function App() {
   const historyData = useMemo(() => {
     const data: DailySummary[] = [];
     const now = new Date();
-    
     if (historyPeriod === 'week') {
       const day = now.getDay();
-      const diff = now.getDate() - (day === 0 ? 6 : day - 1); // Monday is start of week
+      const diff = now.getDate() - (day === 0 ? 6 : day - 1); 
       const startOfWeek = new Date(now.getFullYear(), now.getMonth(), diff);
-      
       for (let i = 0; i < 7; i++) {
         const d = new Date(startOfWeek);
         d.setDate(startOfWeek.getDate() + i);
@@ -238,14 +180,13 @@ export default function App() {
         data.push({ date: ds, totalProtein: dayTotalProtein, goal: goal });
       }
       return data;
-    } else { // 'month'
+    } else { 
       for (let i = 5; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const monthStr = d.toISOString().slice(0, 7); // YYYY-MM
+        const monthStr = d.toISOString().slice(0, 7);
         const monthMeals = meals.filter(m => new Date(m.timestamp).toISOString().slice(0, 7) === monthStr);
         const monthTotalProtein = monthMeals.reduce((acc, curr) => acc + curr.proteinGrams, 0);
         const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-        
         data.push({ date: monthStr, totalProtein: monthTotalProtein, goal: goal * daysInMonth });
       }
       return data;
@@ -254,15 +195,16 @@ export default function App() {
 
   return (
     <div className="bg-gray-900 text-white min-h-screen font-sans flex flex-col items-center">
-      <div className="w-full max-w-md mx-auto bg-gray-800 rounded-lg shadow-lg flex flex-col h-screen">
-        <header className="p-4 bg-gray-900 rounded-t-lg flex justify-between items-center">
+      <div className="w-full max-w-md mx-auto bg-gray-800 rounded-lg shadow-lg flex flex-col h-screen relative">
+        <header className="p-4 bg-gray-900 rounded-t-lg flex justify-between items-center border-b border-gray-800">
           <h1 className="text-xl font-bold text-teal-400">프로틴 트래커</h1>
+          <div className="w-6"></div>
         </header>
 
         <main className="flex-grow p-4 overflow-y-auto">
           {currentView === 'daily' && (
             <>
-              <div className="bg-gray-700 rounded-lg p-4 mb-4">
+              <div className="bg-gray-700 rounded-lg p-4 mb-4 shadow-inner">
                 <div className="flex justify-between items-center mb-2">
                   <div className="flex items-center space-x-2">
                     <span className="text-lg">오늘의 목표</span>
@@ -283,48 +225,53 @@ export default function App() {
                             (e.target as HTMLInputElement).blur();
                           }
                         }}
-                        className="w-20 bg-gray-800 text-white p-1 rounded"
+                        className="w-20 bg-gray-800 text-white p-1 rounded border border-teal-500/30"
                       />
                     ) : (
                       <span className="text-2xl font-bold text-teal-400">{goal}g</span>
                     )}
                   </div>
-                  <button onClick={toggleEditGoal} className="p-1 rounded-full hover:bg-gray-600">
+                  <button onClick={toggleEditGoal} className="p-1 rounded-full hover:bg-gray-600 text-gray-400">
                     {isEditingGoal ? <CheckIcon className="w-5 h-5" /> : <PencilIcon className="w-5 h-5" />}
                   </button>
                 </div>
-                <div className="w-full bg-gray-600 rounded-full h-4">
+                <div className="w-full bg-gray-600 rounded-full h-4 overflow-hidden">
                   <div
-                    className="bg-teal-500 h-4 rounded-full transition-all duration-500"
+                    className="bg-teal-500 h-4 rounded-full transition-all duration-700 ease-out"
                     style={{ width: `${progressPercent}%` }}
                   ></div>
                 </div>
-                <div className="flex justify-between text-sm mt-1">
+                <div className="flex justify-between text-sm mt-2 text-gray-300">
                   <span>{todayStats.protein.toFixed(0)}g 섭취</span>
                   <span>{Math.max(goal - todayStats.protein, 0).toFixed(0)}g 남음</span>
                 </div>
-                <p className="text-center mt-3 text-sm text-gray-400">{getEncouragement()}</p>
+                <p className="text-center mt-4 text-sm text-gray-400 italic font-medium">{getEncouragement()}</p>
               </div>
 
               <div className="space-y-3">
-                <h2 className="text-lg font-semibold">오늘의 식단</h2>
+                <h2 className="text-lg font-semibold flex items-center">
+                  오늘의 식단 <span className="ml-2 text-xs font-normal text-gray-500">{todayMeals.length}개 항목</span>
+                </h2>
                 {todayMeals.length === 0 ? (
-                  <p className="text-gray-500 text-center py-4">아직 기록된 식단이 없습니다.</p>
+                  <div className="text-gray-500 text-center py-12 bg-gray-700/30 rounded-xl border-2 border-dashed border-gray-700">
+                    <p>아직 기록된 식단이 없습니다.</p>
+                    <p className="text-xs mt-2 text-gray-600">아래 버튼으로 식사를 기록해보세요!</p>
+                  </div>
                 ) : (
                   todayMeals.map(meal => (
-                    <div key={meal.id} className="bg-gray-700 rounded-lg p-3 flex items-center space-x-3">
-                      {meal.imageUrl && <img src={meal.imageUrl} alt={meal.foodName} className="w-16 h-16 rounded-md object-cover" />}
-                      <div className="flex-grow">
+                    <div key={meal.id} className="bg-gray-700/50 hover:bg-gray-700 rounded-xl p-3 flex items-center space-x-3 transition-colors">
+                      {meal.imageUrl && <img src={meal.imageUrl} alt={meal.foodName} className="w-16 h-16 rounded-lg object-cover shadow-md" />}
+                      <div className="flex-grow min-w-0">
                         <div className="flex justify-between items-start">
-                          <p className="font-semibold">{meal.foodName}</p>
-                          <span className="text-lg font-bold text-teal-400">{meal.proteinGrams}g</span>
+                          <p className="font-semibold truncate">{meal.foodName}</p>
+                          <span className="text-lg font-bold text-teal-400 whitespace-nowrap ml-2">{meal.proteinGrams}g</span>
                         </div>
-                        <div className="flex justify-between items-end text-sm text-gray-400 mt-1">
-                           <span>{meal.category}</span>
-                           <div className="flex items-center space-x-3">
+                        <div className="flex justify-between items-end text-xs text-gray-400 mt-1">
+                           <span className="bg-gray-800 px-2 py-0.5 rounded text-teal-500/80">{meal.category}</span>
+                           <div className="flex items-center space-x-2">
                               <span>{formatTime(meal.timestamp)}</span>
-                              <button onClick={() => deleteMeal(meal.id)} className="p-1 hover:text-red-500">
-                                <TrashIcon className="w-4 h-4" />
+                              <button onClick={() => deleteMeal(meal.id)} className="p-1.5 hover:text-red-500 transition-colors bg-gray-800 rounded-md">
+                                <TrashIcon className="w-3.5 h-3.5" />
                               </button>
                            </div>
                         </div>
@@ -337,22 +284,22 @@ export default function App() {
           )}
 
           {currentView === 'history' && (
-            <div className="h-full flex flex-col">
-              <h2 className="text-lg font-semibold mb-2">섭취 기록</h2>
-              <div className="flex justify-center bg-gray-700 p-1 rounded-lg mb-4">
-                <button onClick={() => setHistoryPeriod('week')} className={`px-4 py-1 rounded-md text-sm font-medium w-1/2 ${historyPeriod === 'week' ? 'bg-teal-500 text-white' : 'text-gray-300'}`}>주간</button>
-                <button onClick={() => setHistoryPeriod('month')} className={`px-4 py-1 rounded-md text-sm font-medium w-1/2 ${historyPeriod === 'month' ? 'bg-teal-500 text-white' : 'text-gray-300'}`}>월간</button>
+            <div className="h-full flex flex-col fade-in">
+              <h2 className="text-lg font-semibold mb-4">섭취 기록 리포트</h2>
+              <div className="flex justify-center bg-gray-700 p-1 rounded-xl mb-6">
+                <button onClick={() => setHistoryPeriod('week')} className={`px-4 py-2 rounded-lg text-sm font-bold w-1/2 transition-all ${historyPeriod === 'week' ? 'bg-teal-500 text-white shadow-lg' : 'text-gray-400'}`}>주간</button>
+                <button onClick={() => setHistoryPeriod('month')} className={`px-4 py-2 rounded-lg text-sm font-bold w-1/2 transition-all ${historyPeriod === 'month' ? 'bg-teal-500 text-white shadow-lg' : 'text-gray-400'}`}>월간</button>
               </div>
-              <div className="mb-4 h-48 bg-gray-700 rounded-lg p-2 flex items-end justify-around">
+              <div className="mb-6 h-56 bg-gray-700/30 rounded-xl p-4 flex items-end justify-around border border-gray-700">
                 {historyData.map((d, i) => (
-                  <div key={i} className="flex flex-col items-center w-full" onClick={() => historyPeriod === 'week' && setSelectedHistoryDate(d.date)}>
-                    <div className="h-full w-full flex items-end justify-center">
+                  <div key={i} className="flex flex-col items-center w-full h-full justify-end" onClick={() => historyPeriod === 'week' && setSelectedHistoryDate(d.date)}>
+                    <div className="h-4/5 w-full flex items-end justify-center relative group">
                       <div 
-                        className="w-4/5 bg-teal-500 rounded-t-sm hover:bg-teal-400 cursor-pointer"
+                        className={`w-3/5 rounded-t-lg transition-all duration-500 cursor-pointer ${selectedHistoryDate === d.date ? 'bg-teal-400 ring-2 ring-teal-200' : 'bg-teal-600 group-hover:bg-teal-500'}`}
                         style={{ height: `${Math.min(100, (d.totalProtein / (historyPeriod === 'week' ? goal : (goal * 30))) * 100)}%`}}
                       ></div>
                     </div>
-                    <span className="text-xs mt-1 text-gray-400">
+                    <span className="text-[10px] mt-2 text-gray-500 font-medium">
                       {historyPeriod === 'week' ? new Date(d.date).getDate() + '일' : new Date(d.date + '-02').toLocaleString('default', { month: 'short' })}
                     </span>
                   </div>
@@ -360,27 +307,27 @@ export default function App() {
               </div>
 
               {selectedHistoryDate && (
-                 <div>
-                    <div className="flex justify-between items-center mb-2">
-                      <h3 className="font-semibold">{new Date(selectedHistoryDate).toLocaleDateString('ko-KR')} 식단</h3>
-                      <button onClick={() => setSelectedHistoryDate(null)}><XMarkIcon className="w-5 h-5" /></button>
+                 <div className="slide-in-from-bottom-4">
+                    <div className="flex justify-between items-center mb-3 bg-gray-900 p-3 rounded-xl border border-gray-700">
+                      <h3 className="font-bold text-teal-400">{new Date(selectedHistoryDate).toLocaleDateString('ko-KR')} 상세</h3>
+                      <button onClick={() => setSelectedHistoryDate(null)} className="p-1 bg-gray-800 rounded-full"><XMarkIcon className="w-4 h-4" /></button>
                     </div>
                     <div className="space-y-2">
                     {meals.filter(m => new Date(m.timestamp).toLocaleDateString('sv-SE') === selectedHistoryDate).length > 0 ? (
                       meals.filter(m => new Date(m.timestamp).toLocaleDateString('sv-SE') === selectedHistoryDate)
                       .sort((a, b) => b.timestamp - a.timestamp)
                       .map(meal => (
-                        <div key={meal.id} className="bg-gray-700 rounded-lg p-2 flex items-center space-x-2">
-                          {meal.imageUrl && <img src={meal.imageUrl} alt={meal.foodName} className="w-12 h-12 rounded-md object-cover" />}
-                          <div className="flex-grow">
-                            <p className="font-semibold text-sm">{meal.foodName}</p>
-                            <p className="text-xs text-gray-400">{formatTime(meal.timestamp)}</p>
+                        <div key={meal.id} className="bg-gray-700/40 rounded-xl p-3 flex items-center space-x-3 border border-gray-700/50">
+                          {meal.imageUrl && <img src={meal.imageUrl} alt={meal.foodName} className="w-12 h-12 rounded-lg object-cover" />}
+                          <div className="flex-grow min-w-0">
+                            <p className="font-semibold text-sm truncate">{meal.foodName}</p>
+                            <p className="text-[10px] text-gray-500 uppercase">{meal.category} • {formatTime(meal.timestamp)}</p>
                           </div>
                           <span className="font-bold text-teal-400">{meal.proteinGrams}g</span>
                         </div>
                       ))
                     ) : (
-                      <p className="text-gray-500 text-center py-2">이 날은 기록이 없습니다.</p>
+                      <p className="text-gray-500 text-center py-4 bg-gray-700/20 rounded-xl">기록이 없습니다.</p>
                     )}
                     </div>
                  </div>
@@ -390,75 +337,112 @@ export default function App() {
         </main>
         
         {currentView === 'daily' && (
-          <div className="px-4 pb-4">
+          <div className="px-4 pb-6 pt-2 bg-gray-900/50 backdrop-blur-sm">
             <div className="grid grid-cols-3 gap-3">
               <button
                 onClick={() => cameraInputRef.current?.click()}
-                className="flex flex-col items-center justify-center py-3 rounded-lg bg-teal-600 hover:bg-teal-700 transition-colors"
+                className="flex flex-col items-center justify-center py-4 rounded-2xl bg-teal-600 hover:bg-teal-500 shadow-lg transition-all active:scale-95 group"
               >
-                <CameraIcon className="w-7 h-7" />
-                <span className="text-sm mt-1">카메라</span>
+                <div className="bg-white/10 p-2 rounded-xl group-hover:bg-white/20 mb-1 transition-colors">
+                  <CameraIcon className="w-6 h-6" />
+                </div>
+                <span className="text-xs font-bold">카메라</span>
               </button>
               <button
                 onClick={() => albumInputRef.current?.click()}
-                className="flex flex-col items-center justify-center py-3 rounded-lg bg-teal-600 hover:bg-teal-700 transition-colors"
+                className="flex flex-col items-center justify-center py-4 rounded-2xl bg-teal-600 hover:bg-teal-500 shadow-lg transition-all active:scale-95 group"
               >
-                <PhotoIcon className="w-7 h-7" />
-                <span className="text-sm mt-1">앨범</span>
+                <div className="bg-white/10 p-2 rounded-xl group-hover:bg-white/20 mb-1 transition-colors">
+                  <PhotoIcon className="w-6 h-6" />
+                </div>
+                <span className="text-xs font-bold">앨범</span>
               </button>
               <button
-                onClick={() => setIsTextModalOpen(true)}
-                className="flex flex-col items-center justify-center py-3 rounded-lg bg-teal-600 hover:bg-teal-700 transition-colors"
+                onClick={() => openAddModal()}
+                className="flex flex-col items-center justify-center py-4 rounded-2xl bg-teal-600 hover:bg-teal-500 shadow-lg transition-all active:scale-95 group"
               >
-                <PencilSquareIcon className="w-7 h-7" />
-                <span className="text-sm mt-1">텍스트</span>
+                <div className="bg-white/10 p-2 rounded-xl group-hover:bg-white/20 mb-1 transition-colors">
+                  <PencilSquareIcon className="w-6 h-6" />
+                </div>
+                <span className="text-xs font-bold">직접 입력</span>
               </button>
             </div>
           </div>
         )}
 
-        <footer className="p-2 bg-gray-900 rounded-b-lg mt-auto flex justify-around border-t border-gray-700">
-          <button onClick={() => setCurrentView('daily')} className={`flex flex-col items-center p-2 w-1/2 rounded-lg ${currentView === 'daily' ? 'text-teal-400' : 'text-gray-400'}`}>
+        <footer className="p-1 bg-gray-900 rounded-b-lg mt-auto flex justify-around border-t border-gray-800">
+          <button onClick={() => setCurrentView('daily')} className={`flex flex-col items-center py-3 w-1/2 rounded-xl transition-all ${currentView === 'daily' ? 'text-teal-400 bg-teal-400/5' : 'text-gray-500 hover:text-gray-400'}`}>
             <HomeIcon className="w-6 h-6" />
-            <span className="text-xs mt-1">오늘</span>
+            <span className="text-[10px] mt-1 font-bold uppercase tracking-wider">오늘</span>
           </button>
-          <button onClick={() => setCurrentView('history')} className={`flex flex-col items-center p-2 w-1/2 rounded-lg ${currentView === 'history' ? 'text-teal-400' : 'text-gray-400'}`}>
+          <button onClick={() => setCurrentView('history')} className={`flex flex-col items-center py-3 w-1/2 rounded-xl transition-all ${currentView === 'history' ? 'text-teal-400 bg-teal-400/5' : 'text-gray-500 hover:text-gray-400'}`}>
             <ChartBarIcon className="w-6 h-6" />
-            <span className="text-xs mt-1">기록</span>
+            <span className="text-[10px] mt-1 font-bold uppercase tracking-wider">기록</span>
           </button>
         </footer>
 
-        {isAnalyzing && (
-          <div className="absolute inset-0 bg-black bg-opacity-70 flex flex-col justify-center items-center z-50">
-            <SparklesIcon className="w-16 h-16 text-teal-400 animate-pulse" />
-            <p className="mt-4 text-lg">{analysisStep}</p>
-          </div>
-        )}
-
-        {isTextModalOpen && (
-          <div className="absolute inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50 p-4">
-            <div className="bg-gray-800 rounded-lg p-4 w-full max-w-sm">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-semibold">텍스트로 식단 기록</h3>
-                <button onClick={() => setIsTextModalOpen(false)} className="p-1 rounded-full hover:bg-gray-700">
+        {isInputModalOpen && (
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-end sm:items-center z-50 p-4 fade-in">
+            <div className="bg-gray-800 rounded-t-3xl sm:rounded-3xl p-6 w-full max-w-sm shadow-2xl border border-gray-700 slide-in-from-bottom-4 max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold">식단 정보 입력</h3>
+                <button onClick={() => setIsInputModalOpen(false)} className="p-2 rounded-full hover:bg-gray-700 bg-gray-900 transition-colors">
                   <XMarkIcon className="w-5 h-5" />
                 </button>
               </div>
-              <form onSubmit={handleManualSubmit}>
-                <textarea
-                  value={manualText}
-                  onChange={(e) => setManualText(e.target.value)}
-                  placeholder="예: 닭가슴살 샐러드, 프로틴 쉐이크"
-                  className="w-full h-24 bg-gray-700 text-white p-2 rounded-md mb-4 focus:ring-2 focus:ring-teal-500 focus:outline-none"
-                  autoFocus
-                />
+              <form onSubmit={handleSaveMeal}>
+                {pendingImage && (
+                  <div className="mb-6">
+                    <img src={pendingImage} alt="Preview" className="w-full h-40 object-cover rounded-2xl border border-gray-700 shadow-lg" />
+                  </div>
+                )}
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">음식 이름</label>
+                    <input
+                      type="text"
+                      value={pendingFoodName}
+                      onChange={(e) => setPendingFoodName(e.target.value)}
+                      placeholder="무엇을 드셨나요?"
+                      className="w-full bg-gray-900 text-white p-4 rounded-2xl focus:ring-2 focus:ring-teal-500 focus:outline-none border border-gray-700 transition-all placeholder:text-gray-600"
+                      autoFocus={!pendingImage}
+                      required
+                    />
+                  </div>
+                  <div className="flex space-x-3">
+                    <div className="flex-grow">
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">단백질 함량 (g)</label>
+                      <input
+                        type="number"
+                        value={pendingProtein}
+                        onChange={(e) => setPendingProtein(e.target.value)}
+                        placeholder="0"
+                        className="w-full bg-gray-900 text-white p-4 rounded-2xl focus:ring-2 focus:ring-teal-500 focus:outline-none border border-gray-700 transition-all placeholder:text-gray-600"
+                        required
+                      />
+                    </div>
+                    <div className="w-1/2">
+                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1 ml-1">식사 분류</label>
+                      <select
+                        value={pendingCategory}
+                        onChange={(e) => setPendingCategory(e.target.value as MealCategory)}
+                        className="w-full bg-gray-900 text-white p-4 rounded-2xl focus:ring-2 focus:ring-teal-500 focus:outline-none border border-gray-700 transition-all appearance-none"
+                      >
+                        <option value="Breakfast">아침</option>
+                        <option value="Lunch">점심</option>
+                        <option value="Dinner">저녁</option>
+                        <option value="Snack">간식</option>
+                        <option value="Other">기타</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
                 <button
                   type="submit"
-                  className="w-full bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center disabled:opacity-50"
-                  disabled={!manualText.trim()}
+                  className="w-full bg-teal-500 hover:bg-teal-600 text-white font-bold py-4 px-4 rounded-xl flex items-center justify-center mt-8 shadow-lg active:scale-95 transition-all"
                 >
-                  <SparklesIcon className="w-5 h-5 mr-2" />
-                  AI로 분석하기
+                  <PlusIcon className="w-5 h-5 mr-2" />
+                  기록 저장하기
                 </button>
               </form>
             </div>
