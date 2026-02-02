@@ -115,9 +115,16 @@ export default function App() {
   const analyzeMeal = async (base64Data?: string, textPrompt?: string) => {
     setIsAnalyzing(true);
     setAnalysisStep('AI가 식단을 분석하고 있습니다...');
+
+    const apiKey = (process.env as any).API_KEY;
+    if (!apiKey) {
+      alert('API 키가 설정되지 않았습니다. Vercel 프로젝트 환경 변수에 API_KEY를 추가해주세요.');
+      setIsAnalyzing(false);
+      return;
+    }
     
     try {
-      const ai = new GoogleGenAI({ apiKey: (process.env as any).API_KEY });
+      const ai = new GoogleGenAI({ apiKey });
       const promptParts: any[] = [];
       
       if (base64Data) {
@@ -213,7 +220,6 @@ export default function App() {
     }
   };
 
-  // FIX: The useMemo hook was incomplete.
   const historyData = useMemo(() => {
     const data: DailySummary[] = [];
     const now = new Date();
@@ -246,7 +252,6 @@ export default function App() {
     }
   }, [meals, goal, historyPeriod]);
 
-  // FIX: The component was missing a return statement, causing the "not a valid JSX element" error.
   return (
     <div className="bg-gray-900 text-white min-h-screen font-sans flex flex-col items-center">
       <div className="w-full max-w-md mx-auto bg-gray-800 rounded-lg shadow-lg flex flex-col h-screen">
@@ -461,7 +466,7 @@ export default function App() {
         )}
       </div>
 
-      <input type="file" accept="image/*" capture="camera" ref={cameraInputRef} onChange={handleImageUpload} className="hidden" />
+      <input type="file" accept="image/*" capture="environment" ref={cameraInputRef} onChange={handleImageUpload} className="hidden" />
       <input type="file" accept="image/*" ref={albumInputRef} onChange={handleImageUpload} className="hidden" />
     </div>
   );
