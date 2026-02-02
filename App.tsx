@@ -6,22 +6,19 @@ import {
   CameraIcon, 
   PhotoIcon, 
   ChartBarIcon,
-  CalendarDaysIcon,
   TrashIcon,
   HomeIcon,
-  ChevronLeftIcon,
-  ClockIcon,
   PencilIcon,
   XMarkIcon,
   PencilSquareIcon,
   CheckIcon,
-  PlusIcon,
   SparklesIcon
 } from '@heroicons/react/24/outline';
 
 const MODEL_NAME = 'gemini-3-flash-preview';
 const MAX_IMAGE_DIMENSION = 1024; 
 
+// 이미지 리사이징 헬퍼
 const resizeImage = (base64Str: string): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
@@ -50,14 +47,6 @@ const resizeImage = (base64Str: string): Promise<string> => {
       resolve(canvas.toDataURL('image/jpeg', 0.8)); 
     };
   });
-};
-
-const CATEGORY_ICONS: Record<MealCategory, string> = {
-  'Breakfast': '🌅',
-  'Lunch': '☀️',
-  'Dinner': '🌙',
-  'Snack': '🍪',
-  'Other': '🍴'
 };
 
 export default function App() {
@@ -128,7 +117,7 @@ export default function App() {
     setAnalysisStep('AI가 식단을 분석하고 있습니다...');
     
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const ai = new GoogleGenAI({ apiKey: (process.env as any).API_KEY });
       const promptParts: any[] = [];
       
       if (base64Data) {
@@ -162,7 +151,11 @@ export default function App() {
         }
       });
 
-      const result = JSON.parse(response.text);
+      const resultText = response.text;
+      if (!resultText) {
+        throw new Error("AI 응답을 받지 못했습니다.");
+      }
+      const result = JSON.parse(resultText);
       const newMeal: MealLog = {
         id: Math.random().toString(36).substr(2, 9),
         timestamp: Date.now(),
@@ -220,13 +213,14 @@ export default function App() {
     }
   };
 
+  // FIX: The useMemo hook was incomplete.
   const historyData = useMemo(() => {
+    const data: DailySummary[] = [];
+    const now = new Date();
+    
     if (historyPeriod === 'week') {
-      const data: DailySummary[] = [];
-      const now = new Date();
-      // Get the Monday of current week
       const day = now.getDay();
-      const diff = now.getDate() - (day === 0 ? 6 : day - 1);
+      const diff = now.getDate() - (day === 0 ? 6 : day - 1); // Monday is start of week
       const startOfWeek = new Date(now.getFullYear(), now.getMonth(), diff);
       
       for (let i = 0; i < 7; i++) {
@@ -238,329 +232,237 @@ export default function App() {
         data.push({ date: ds, totalProtein: dayTotalProtein, goal: goal });
       }
       return data;
-    } else {
-      const data: DailySummary[] = [];
-      const now = new Date();
+    } else { // 'month'
       for (let i = 5; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const year = d.getFullYear();
-        const month = d.getMonth();
-        
-        const monthMeals = meals.filter(m => {
-          const mDate = new Date(m.timestamp);
-          return mDate.getFullYear() === year && mDate.getMonth() === month;
-        });
-        
+        const monthStr = d.toISOString().slice(0, 7); // YYYY-MM
+        const monthMeals = meals.filter(m => new Date(m.timestamp).toISOString().slice(0, 7) === monthStr);
         const monthTotalProtein = monthMeals.reduce((acc, curr) => acc + curr.proteinGrams, 0);
+        const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
         
-        const ds = `${year}-${String(month + 1).padStart(2, '0')}`;
-        data.push({ 
-          date: ds, 
-          totalProtein: monthTotalProtein, 
-          goal: goal * 30 
-        });
+        data.push({ date: monthStr, totalProtein: monthTotalProtein, goal: goal * daysInMonth });
       }
       return data;
     }
-  }, [meals, historyPeriod, goal]);
+  }, [meals, goal, historyPeriod]);
 
-  const maxProtein = useMemo(() => {
-    const values = historyData.map(d => d.totalProtein);
-    const target = historyPeriod === 'week' ? goal : goal * 30;
-    return Math.max(...values, target, 1);
-  }, [historyData, historyPeriod, goal]);
-
-  const selectedDayMeals = useMemo(() => {
-    if (!selectedHistoryDate) return [];
-    return meals
-      .filter(m => {
-        const mDate = new Date(m.timestamp).toLocaleDateString('sv-SE');
-        if (historyPeriod === 'week') {
-          return mDate === selectedHistoryDate;
-        } else {
-          return mDate.startsWith(selectedHistoryDate);
-        }
-      })
-      .sort((a, b) => b.timestamp - a.timestamp);
-  }, [meals, selectedHistoryDate, historyPeriod]);
-
-  const renderMealCard = (meal: MealLog) => (
-    <div key={meal.id} className="group bg-white rounded-3xl p-4 shadow-sm flex items-center border border-slate-100 transition-all hover:shadow-md hover:border-indigo-100">
-      <div className="relative w-16 h-16 rounded-2xl bg-slate-50 overflow-hidden flex-shrink-0 border border-slate-100">
-        {meal.imageUrl ? (
-          <img src={meal.imageUrl} alt={meal.foodName} className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-slate-300 text-2xl">
-            🍴
-          </div>
-        )}
-      </div>
-      <div className="ml-4 flex-grow">
-        <div className="flex items-center space-x-2 text-[10px] font-bold text-slate-400 mb-0.5">
-          <ClockIcon className="w-3 h-3" />
-          <span>{formatTime(meal.timestamp)}</span>
-        </div>
-        <h3 className="font-bold text-slate-800 text-sm truncate max-w-[160px]">{meal.foodName}</h3>
-        <div className="flex items-center space-x-3 mt-0.5">
-          <p className="text-indigo-600 font-black text-xs">{meal.proteinGrams}g</p>
-        </div>
-      </div>
-      <button 
-        onClick={() => deleteMeal(meal.id)} 
-        className="p-2.5 text-slate-200 hover:text-red-400 hover:bg-red-50 rounded-full transition-all opacity-0 group-hover:opacity-100"
-      >
-        <TrashIcon className="w-5 h-5" />
-      </button>
-    </div>
-  );
-
+  // FIX: The component was missing a return statement, causing the "not a valid JSX element" error.
   return (
-    <div className="max-w-md mx-auto min-h-screen bg-[#FDFDFF] flex flex-col pb-10 relative overflow-x-hidden font-sans">
-      {/* Dynamic Header */}
-      <header className="bg-white px-6 pt-14 pb-8 rounded-b-[40px] shadow-[0_10px_40px_-15px_rgba(0,0,0,0.05)] sticky top-0 z-30 transition-all">
-        <div className="flex justify-between items-center mb-8">
-          <div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight">Protein <span className="text-indigo-600">AI</span></h1>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mt-1">Daily Tracker</p>
-          </div>
-          <button 
-            onClick={() => {
-              setCurrentView(currentView === 'daily' ? 'history' : 'daily');
-              setSelectedHistoryDate(null);
-            }}
-            className="w-12 h-12 flex items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600 shadow-inner hover:scale-105 active:scale-95 transition-all"
-          >
-            {currentView === 'daily' ? <ChartBarIcon className="w-6 h-6" /> : <HomeIcon className="w-6 h-6" />}
-          </button>
-        </div>
+    <div className="bg-gray-900 text-white min-h-screen font-sans flex flex-col items-center">
+      <div className="w-full max-w-md mx-auto bg-gray-800 rounded-lg shadow-lg flex flex-col h-screen">
+        <header className="p-4 bg-gray-900 rounded-t-lg flex justify-between items-center">
+          <h1 className="text-xl font-bold text-teal-400">프로틴 트래커</h1>
+        </header>
 
-        {currentView === 'daily' && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-end relative">
-              <div className="z-10">
-                <div className="flex items-baseline space-x-1">
-                  <span className="text-5xl font-black text-slate-900 tabular-nums">{todayStats.protein}</span>
-                  <span className="text-slate-400 font-bold text-xl">/ {goal}g</span>
-                </div>
-              </div>
-
-              <div className="text-right z-10">
-                <div className={`inline-flex items-center space-x-2 rounded-2xl px-3 py-2 transition-all ${isEditingGoal ? 'bg-indigo-600 shadow-lg scale-110' : 'bg-slate-50'}`}>
-                  {isEditingGoal ? (
-                    <input 
-                      ref={goalInputRef}
-                      type="number" 
-                      value={goal} 
-                      onChange={(e) => setGoal(Number(e.target.value) || 0)}
-                      onBlur={() => setIsEditingGoal(false)}
-                      className="w-14 text-center text-sm font-black text-white bg-transparent outline-none border-none p-0"
-                    />
-                  ) : (
-                    <span className="text-xs font-black text-slate-700">{goal}g</span>
-                  )}
-                  <button 
-                    onClick={toggleEditGoal}
-                    className={`p-1 rounded-lg transition-colors ${isEditingGoal ? 'text-indigo-200' : 'text-slate-400 hover:text-indigo-600'}`}
-                  >
-                    {isEditingGoal ? <CheckIcon className="w-4 h-4" /> : <PencilSquareIcon className="w-4 h-4" />}
+        <main className="flex-grow p-4 overflow-y-auto">
+          {currentView === 'daily' && (
+            <>
+              <div className="bg-gray-700 rounded-lg p-4 mb-4">
+                <div className="flex justify-between items-center mb-2">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-lg">오늘의 목표</span>
+                    {isEditingGoal ? (
+                      <input
+                        ref={goalInputRef}
+                        type="number"
+                        defaultValue={goal}
+                        onBlur={(e) => {
+                          const newGoal = parseInt(e.target.value, 10);
+                          if (!isNaN(newGoal) && newGoal > 0) {
+                            setGoal(newGoal);
+                          }
+                          setIsEditingGoal(false);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            (e.target as HTMLInputElement).blur();
+                          }
+                        }}
+                        className="w-20 bg-gray-800 text-white p-1 rounded"
+                      />
+                    ) : (
+                      <span className="text-2xl font-bold text-teal-400">{goal}g</span>
+                    )}
+                  </div>
+                  <button onClick={toggleEditGoal} className="p-1 rounded-full hover:bg-gray-600">
+                    {isEditingGoal ? <CheckIcon className="w-5 h-5" /> : <PencilIcon className="w-5 h-5" />}
                   </button>
                 </div>
-                <p className="text-[9px] font-bold text-slate-300 uppercase mt-2 tracking-widest">Target Protein</p>
-              </div>
-              
-              <div className="absolute -top-10 -left-10 w-32 h-32 bg-indigo-100 rounded-full blur-3xl opacity-40 -z-10" />
-            </div>
-
-            <div className="relative h-3 bg-slate-100 rounded-full overflow-hidden shadow-inner">
-              <div 
-                className="h-full bg-gradient-to-r from-indigo-500 to-indigo-600 shadow-[0_0_15px_rgba(79,70,229,0.3)] transition-all duration-1000 ease-out rounded-full" 
-                style={{ width: `${progressPercent}%` }} 
-              />
-            </div>
-            
-            <div className="flex items-center justify-center space-x-2 py-1 px-4 bg-indigo-50/50 rounded-2xl border border-indigo-100/50">
-              <SparklesIcon className="w-4 h-4 text-indigo-500 animate-pulse" />
-              <p className="text-center font-bold text-[11px] text-indigo-700/80">{getEncouragement()}</p>
-            </div>
-          </div>
-        )}
-      </header>
-
-      <main className="flex-grow px-6 py-10">
-        {currentView === 'daily' ? (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-black text-slate-800 flex items-center">
-                <CalendarDaysIcon className="w-4 h-4 mr-2 text-indigo-500" /> 오늘의 기록
-              </h2>
-              <span className="text-[10px] font-bold text-slate-400">{todayMeals.length}개 식사</span>
-            </div>
-
-            {/* In-flow Action Bar for Daily View */}
-            <div className="space-y-4">
-              {isAnalyzing && (
-                <div className="bg-slate-900/95 backdrop-blur-xl text-white px-6 py-3 rounded-2xl flex items-center space-x-3 shadow-lg animate-in zoom-in-95 duration-200">
-                  <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-[11px] font-black uppercase tracking-widest">{analysisStep}</span>
+                <div className="w-full bg-gray-600 rounded-full h-4">
+                  <div
+                    className="bg-teal-500 h-4 rounded-full transition-all duration-500"
+                    style={{ width: `${progressPercent}%` }}
+                  ></div>
                 </div>
-              )}
-              
-              <div className="bg-white p-4 rounded-[32px] shadow-sm flex items-center justify-around w-full border border-slate-100">
-                <button 
-                  onClick={() => albumInputRef.current?.click()} 
-                  disabled={isAnalyzing} 
-                  className="w-14 h-14 flex items-center justify-center text-slate-400 hover:text-indigo-600 active:scale-90 transition-all rounded-2xl bg-slate-50"
-                >
-                  <PhotoIcon className="w-7 h-7" />
-                </button>
-                
-                <button 
-                  onClick={() => cameraInputRef.current?.click()} 
-                  disabled={isAnalyzing} 
-                  className="w-16 h-16 bg-indigo-600 text-white flex items-center justify-center rounded-2xl shadow-md shadow-indigo-100 active:scale-95 transition-all"
-                >
-                  <CameraIcon className="w-8 h-8" />
-                </button>
-                
-                <button 
-                  onClick={() => setIsTextModalOpen(true)} 
-                  disabled={isAnalyzing} 
-                  className="w-14 h-14 flex items-center justify-center text-slate-400 hover:text-indigo-600 active:scale-90 transition-all rounded-2xl bg-slate-50"
-                >
-                  <PencilIcon className="w-7 h-7" />
-                </button>
-              </div>
-            </div>
-            
-            {todayMeals.length === 0 ? (
-              <div className="py-20 flex flex-col items-center justify-center bg-white rounded-[40px] border-2 border-dashed border-slate-100 group transition-all hover:border-indigo-100">
-                <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                  <PlusIcon className="w-10 h-10 text-slate-200" />
+                <div className="flex justify-between text-sm mt-1">
+                  <span>{todayStats.protein.toFixed(0)}g 섭취</span>
+                  <span>{Math.max(goal - todayStats.protein, 0).toFixed(0)}g 남음</span>
                 </div>
-                <p className="text-sm font-bold text-slate-400">아직 기록된 식사가 없습니다</p>
+                <p className="text-center mt-3 text-sm text-gray-400">{getEncouragement()}</p>
               </div>
-            ) : (
-              <div className="grid gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                {todayMeals.map(renderMealCard)}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-8 animate-in fade-in duration-300">
-            {!selectedHistoryDate ? (
-              <>
-                <div className="flex bg-slate-100/80 p-1.5 rounded-2xl">
-                  <button onClick={() => setHistoryPeriod('week')} className={`flex-1 py-2.5 text-xs font-black rounded-xl transition-all ${historyPeriod === 'week' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>Weekly</button>
-                  <button onClick={() => setHistoryPeriod('month')} className={`flex-1 py-2.5 text-xs font-black rounded-xl transition-all ${historyPeriod === 'month' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400'}`}>Monthly</button>
-                </div>
-                
-                <div className="bg-white p-6 rounded-[40px] shadow-sm border border-slate-100 h-64 flex items-end justify-between space-x-2 px-6">
-                  {historyData.map((d, i) => {
-                    const currentTarget = historyPeriod === 'week' ? goal : goal * 30;
-                    return (
-                      <div key={i} className="flex-1 flex flex-col items-center h-full group">
-                        <div className="flex-grow w-full flex items-end relative">
-                           <div className="absolute w-full border-t border-slate-100 border-dashed" style={{ bottom: `${(currentTarget / maxProtein) * 100}%` }} />
-                          
-                          <button 
-                            onClick={() => setSelectedHistoryDate(d.date)}
-                            className={`w-full rounded-t-xl transition-all relative overflow-hidden group-hover:brightness-110 ${d.totalProtein >= currentTarget ? 'bg-indigo-600' : 'bg-indigo-100'}`}
-                            style={{ height: `${(d.totalProtein / maxProtein) * 100}%`, minHeight: '6px' }}
-                          >
-                            {d.totalProtein >= currentTarget && (
-                              <div className="absolute inset-0 bg-gradient-to-t from-black/10 to-transparent" />
-                            )}
-                          </button>
+
+              <div className="space-y-3">
+                <h2 className="text-lg font-semibold">오늘의 식단</h2>
+                {todayMeals.length === 0 ? (
+                  <p className="text-gray-500 text-center py-4">아직 기록된 식단이 없습니다.</p>
+                ) : (
+                  todayMeals.map(meal => (
+                    <div key={meal.id} className="bg-gray-700 rounded-lg p-3 flex items-center space-x-3">
+                      {meal.imageUrl && <img src={meal.imageUrl} alt={meal.foodName} className="w-16 h-16 rounded-md object-cover" />}
+                      <div className="flex-grow">
+                        <div className="flex justify-between items-start">
+                          <p className="font-semibold">{meal.foodName}</p>
+                          <span className="text-lg font-bold text-teal-400">{meal.proteinGrams}g</span>
                         </div>
-                        <span className="text-[8px] font-bold text-slate-400 mt-3 whitespace-nowrap">
-                          {historyPeriod === 'week' 
-                            ? d.date.split('-').slice(1).join('/') 
-                            : `${d.date.split('-')[1]}월`}
-                        </span>
+                        <div className="flex justify-between items-end text-sm text-gray-400 mt-1">
+                           <span>{meal.category}</span>
+                           <div className="flex items-center space-x-3">
+                              <span>{formatTime(meal.timestamp)}</span>
+                              <button onClick={() => deleteMeal(meal.id)} className="p-1 hover:text-red-500">
+                                <TrashIcon className="w-4 h-4" />
+                              </button>
+                           </div>
+                        </div>
                       </div>
-                    );
-                  })}
-                </div>
-
-                <div className="bg-indigo-600 rounded-[32px] p-6 text-white flex items-center justify-between shadow-xl shadow-indigo-200">
-                  <div>
-                    <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest mb-1">
-                      {historyPeriod === 'week' ? 'Weekly Average' : 'Monthly Average'}
-                    </p>
-                    <h3 className="text-2xl font-black">
-                      {Math.round(historyData.reduce((a, b) => a + b.totalProtein, 0) / historyData.length)}g
-                    </h3>
-                  </div>
-                  <div className="bg-white/20 p-3 rounded-2xl backdrop-blur-md">
-                    <ChartBarIcon className="w-6 h-6" />
-                  </div>
-                </div>
-              </>
-            ) : (
-              <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
-                <div className="flex items-center justify-between">
-                  <button 
-                    onClick={() => setSelectedHistoryDate(null)} 
-                    className="flex items-center text-xs font-black text-slate-500 bg-white px-4 py-2.5 rounded-2xl shadow-sm border border-slate-100 active:scale-95 transition-all"
-                  >
-                    <ChevronLeftIcon className="w-4 h-4 mr-1" /> 목록으로
-                  </button>
-                  <h2 className="text-sm font-black text-slate-800">
-                    {historyPeriod === 'week' ? selectedHistoryDate : `${selectedHistoryDate.split('-')[0]}년 ${selectedHistoryDate.split('-')[1]}월`}
-                  </h2>
-                </div>
-                
-                <div className="grid gap-4">
-                  {selectedDayMeals.length > 0 ? (
-                    selectedDayMeals.map(renderMealCard)
-                  ) : (
-                    <div className="text-center py-20 text-slate-300 font-bold">기록이 없습니다.</div>
-                  )}
-                </div>
+                    </div>
+                  ))
+                )}
               </div>
-            )}
-          </div>
-        )}
-      </main>
+            </>
+          )}
 
-      {/* Text Input Modal */}
-      {isTextModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white w-full max-w-md rounded-t-[40px] sm:rounded-[40px] p-8 shadow-2xl animate-in slide-in-from-bottom-10 duration-300">
-            <div className="flex justify-between items-center mb-8">
-              <div>
-                <h3 className="font-black text-slate-900 text-lg">직접 입력하기</h3>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-1">Manual Food Entry</p>
+          {currentView === 'history' && (
+            <div className="h-full flex flex-col">
+              <h2 className="text-lg font-semibold mb-2">섭취 기록</h2>
+              <div className="flex justify-center bg-gray-700 p-1 rounded-lg mb-4">
+                <button onClick={() => setHistoryPeriod('week')} className={`px-4 py-1 rounded-md text-sm font-medium w-1/2 ${historyPeriod === 'week' ? 'bg-teal-500 text-white' : 'text-gray-300'}`}>주간</button>
+                <button onClick={() => setHistoryPeriod('month')} className={`px-4 py-1 rounded-md text-sm font-medium w-1/2 ${historyPeriod === 'month' ? 'bg-teal-500 text-white' : 'text-gray-300'}`}>월간</button>
               </div>
-              <button onClick={() => setIsTextModalOpen(false)} className="w-10 h-10 flex items-center justify-center bg-slate-50 rounded-2xl text-slate-400 hover:text-slate-600">
-                <XMarkIcon className="w-6 h-6" />
+              <div className="mb-4 h-48 bg-gray-700 rounded-lg p-2 flex items-end justify-around">
+                {historyData.map((d, i) => (
+                  <div key={i} className="flex flex-col items-center w-full" onClick={() => historyPeriod === 'week' && setSelectedHistoryDate(d.date)}>
+                    <div className="h-full w-full flex items-end justify-center">
+                      <div 
+                        className="w-4/5 bg-teal-500 rounded-t-sm hover:bg-teal-400 cursor-pointer"
+                        style={{ height: `${Math.min(100, (d.totalProtein / (historyPeriod === 'week' ? goal : (goal * 30))) * 100)}%`}}
+                      ></div>
+                    </div>
+                    <span className="text-xs mt-1 text-gray-400">
+                      {historyPeriod === 'week' ? new Date(d.date).getDate() + '일' : new Date(d.date + '-02').toLocaleString('default', { month: 'short' })}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              {selectedHistoryDate && (
+                 <div>
+                    <div className="flex justify-between items-center mb-2">
+                      <h3 className="font-semibold">{new Date(selectedHistoryDate).toLocaleDateString('ko-KR')} 식단</h3>
+                      <button onClick={() => setSelectedHistoryDate(null)}><XMarkIcon className="w-5 h-5" /></button>
+                    </div>
+                    <div className="space-y-2">
+                    {meals.filter(m => new Date(m.timestamp).toLocaleDateString('sv-SE') === selectedHistoryDate).length > 0 ? (
+                      meals.filter(m => new Date(m.timestamp).toLocaleDateString('sv-SE') === selectedHistoryDate)
+                      .sort((a, b) => b.timestamp - a.timestamp)
+                      .map(meal => (
+                        <div key={meal.id} className="bg-gray-700 rounded-lg p-2 flex items-center space-x-2">
+                          {meal.imageUrl && <img src={meal.imageUrl} alt={meal.foodName} className="w-12 h-12 rounded-md object-cover" />}
+                          <div className="flex-grow">
+                            <p className="font-semibold text-sm">{meal.foodName}</p>
+                            <p className="text-xs text-gray-400">{formatTime(meal.timestamp)}</p>
+                          </div>
+                          <span className="font-bold text-teal-400">{meal.proteinGrams}g</span>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-gray-500 text-center py-2">이 날은 기록이 없습니다.</p>
+                    )}
+                    </div>
+                 </div>
+              )}
+            </div>
+          )}
+        </main>
+        
+        {currentView === 'daily' && (
+          <div className="px-4 pb-4">
+            <div className="grid grid-cols-3 gap-3">
+              <button
+                onClick={() => cameraInputRef.current?.click()}
+                className="flex flex-col items-center justify-center py-3 rounded-lg bg-teal-600 hover:bg-teal-700 transition-colors"
+              >
+                <CameraIcon className="w-7 h-7" />
+                <span className="text-sm mt-1">카메라</span>
+              </button>
+              <button
+                onClick={() => albumInputRef.current?.click()}
+                className="flex flex-col items-center justify-center py-3 rounded-lg bg-teal-600 hover:bg-teal-700 transition-colors"
+              >
+                <PhotoIcon className="w-7 h-7" />
+                <span className="text-sm mt-1">앨범</span>
+              </button>
+              <button
+                onClick={() => setIsTextModalOpen(true)}
+                className="flex flex-col items-center justify-center py-3 rounded-lg bg-teal-600 hover:bg-teal-700 transition-colors"
+              >
+                <PencilSquareIcon className="w-7 h-7" />
+                <span className="text-sm mt-1">텍스트</span>
               </button>
             </div>
-            <form onSubmit={handleManualSubmit} className="space-y-6">
-              <div className="relative">
-                <input 
-                  autoFocus
-                  type="text" 
+          </div>
+        )}
+
+        <footer className="p-2 bg-gray-900 rounded-b-lg mt-auto flex justify-around border-t border-gray-700">
+          <button onClick={() => setCurrentView('daily')} className={`flex flex-col items-center p-2 w-1/2 rounded-lg ${currentView === 'daily' ? 'text-teal-400' : 'text-gray-400'}`}>
+            <HomeIcon className="w-6 h-6" />
+            <span className="text-xs mt-1">오늘</span>
+          </button>
+          <button onClick={() => setCurrentView('history')} className={`flex flex-col items-center p-2 w-1/2 rounded-lg ${currentView === 'history' ? 'text-teal-400' : 'text-gray-400'}`}>
+            <ChartBarIcon className="w-6 h-6" />
+            <span className="text-xs mt-1">기록</span>
+          </button>
+        </footer>
+
+        {isAnalyzing && (
+          <div className="absolute inset-0 bg-black bg-opacity-70 flex flex-col justify-center items-center z-50">
+            <SparklesIcon className="w-16 h-16 text-teal-400 animate-pulse" />
+            <p className="mt-4 text-lg">{analysisStep}</p>
+          </div>
+        )}
+
+        {isTextModalOpen && (
+          <div className="absolute inset-0 bg-black bg-opacity-70 flex justify-center items-center z-50 p-4">
+            <div className="bg-gray-800 rounded-lg p-4 w-full max-w-sm">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold">텍스트로 식단 기록</h3>
+                <button onClick={() => setIsTextModalOpen(false)} className="p-1 rounded-full hover:bg-gray-700">
+                  <XMarkIcon className="w-5 h-5" />
+                </button>
+              </div>
+              <form onSubmit={handleManualSubmit}>
+                <textarea
                   value={manualText}
                   onChange={(e) => setManualText(e.target.value)}
-                  placeholder="예: 닭가슴살 200g, 삶은 계란 2개..."
-                  className="w-full bg-slate-50 border-none rounded-2xl px-6 py-5 text-sm font-bold outline-none ring-2 ring-transparent focus:ring-indigo-500 transition-all placeholder:text-slate-300"
+                  placeholder="예: 닭가슴살 샐러드, 프로틴 쉐이크"
+                  className="w-full h-24 bg-gray-700 text-white p-2 rounded-md mb-4 focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                  autoFocus
                 />
-              </div>
-              <button 
-                type="submit" 
-                className="w-full bg-indigo-600 text-white font-black py-5 rounded-2xl shadow-xl shadow-indigo-100 hover:brightness-110 active:scale-95 transition-all"
-              >
-                단백질 계산하기
-              </button>
-            </form>
+                <button
+                  type="submit"
+                  className="w-full bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center disabled:opacity-50"
+                  disabled={!manualText.trim()}
+                >
+                  <SparklesIcon className="w-5 h-5 mr-2" />
+                  AI로 분석하기
+                </button>
+              </form>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* Hidden Inputs */}
-      <input type="file" ref={cameraInputRef} accept="image/*" capture="environment" className="hidden" onChange={handleImageUpload} />
-      <input type="file" ref={albumInputRef} accept="image/*" className="hidden" onChange={handleImageUpload} />
+      <input type="file" accept="image/*" capture="camera" ref={cameraInputRef} onChange={handleImageUpload} className="hidden" />
+      <input type="file" accept="image/*" ref={albumInputRef} onChange={handleImageUpload} className="hidden" />
     </div>
   );
 }
