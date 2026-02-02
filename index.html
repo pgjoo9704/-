@@ -4,18 +4,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Protein AI Tracker</title>
+    <title>Protein tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
       :root {
-        --app-bg: #FDFDFF;
+        --app-bg: #F8FAFC; /* Slate 50 */
       }
       body {
         font-family: 'Pretendard', sans-serif;
         background-color: var(--app-bg);
         -webkit-tap-highlight-color: transparent;
         overflow-x: hidden;
+        color: #0F172A; /* Slate 900 */
       }
       .animate-in {
         animation-fill-mode: forwards;
@@ -39,6 +40,11 @@
         -ms-overflow-style: none;
         scrollbar-width: none;
       }
+
+      /* Custom blue theme overrides */
+      .bg-primary { background-color: #2563EB; }
+      .text-primary { color: #2563EB; }
+      .border-primary { border-color: #2563EB; }
     </style>
   <script type="importmap">
 {
